@@ -1,40 +1,51 @@
-CXX = g++
-NASM = nasm
+CC = gcc
+AS = nasm
 LD = ld
 
-CXXFLAGS = -m32 -ffreestanding -fno-exceptions -fno-rtti -Wall -Wextra
-NASMFLAGS = -f elf32
-LDFLAGS = -m elf_i386 -T link.ld
-SRC_DIR = src
-BUILD_DIR = build
-KERNEL_SOURCES = $(wildcard$(SRC_DIR)/kernel/.cpp) $(wildcard$(SRC_DIR)/drivers/.cpp)
-BOOT_SOURCE = $(SRC_DIR)/boot/boot.asm
+CFLAGS = -ffreestanding -m32 -c -Wall -Wextra -I include/
+LDFLAGS = -nostdlib -T link.ld -m elf_i386
 
-KERNEL_OBJECTS = $(KERNEL_SOURCES:.cpp=.o)
-BOOT_OBJECT = $(SRC_DIR)/boot/boot.o
-KERNEL_BIN = $(BUILD_DIR)/pokmonos.bin
-ISO_IMAGE = $(BUILD_DIR)/pokmonos.iso
+SRC_CPP = \
+	src/boot/loader.cpp \
+	src/drivers/keyboard_driver.cpp \
+	src/drivers/screen_driver.cpp \
+	src/drivers/storage_driver.cpp \
+	src/kernel/interrupt_handler.cpp \
+	src/kernel/kernel.cpp \
+	src/kernel/memory_manager.cpp \
+	src/kernel/process_manager.cpp \
+	src/utils/math_utils.cpp \
+	src/utils/string_utils.cpp
 
-.PHONY: all clean iso run
-all: $(KERNEL_BIN)
+SRC_ASM = src/boot/boot.asm
 
+OBJ_CPP = $(SRC_CPP:.cpp=.o)
+OBJ_ASM = $(SRC_ASM:.asm=.o)
+OBJ = $(OBJ_CPP) $(OBJ_ASM)
 
-%.o:%.cpp$(CXX)$(CXXFLAGS) -c $< -o $@
+kernel.bin: $(OBJ)
+	$(LD) $(LDFLAGS) -o $@ $(OBJ)
 
-%.o:%.asm $(NASM) $(NASMFLAGS) $< -o $@
+%.o: %.cpp
+	$(CC) $(CFLAGS) $< -o $@
 
-$(KERNEL_BIN):$(BOOT_OBJECT) $(KERNEL_OBJECTS)
-	mkdir -p $(BUILD_DIR) $(LD) $(LDFLAGS) -o $@ $^
+%.o: %.asm
+	$(AS) -f elf $< -o $@
 
-iso:$(KERNEL_BIN)
-	mkdir -p $(BUILD_DIR)/iso/boot/grub
-	cp $(KERNEL_BIN) $(BUILD_DIR)/iso/boot/
-	echo "menuentry 'PokmonOS' {" > $(BUILD_DIR)/iso/boot/grub/grub.cfg
-	echo "multiboot /boot/pokmonos.bin" >> $(BUILD_DIR)/iso/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO_IMAGE) $(BUILD_DIR)/iso
+# Budowanie ISO
+build/image.iso: kernel.bin
+	mkdir -p iso/boot
+	cp kernel.bin iso/boot/
+	mkdir -p iso/boot/grub
+	cp src/boot/grub.cfg iso/boot/grub/
+	xorriso -as mkisofs \
+    	-b /usr/lib/syslinux/modules/bios/isolinux.bin \
+    	-c boot/isolinux/boot.cat \
+    	-no-emul-boot \
+    	-boot-load-size 4 \
+    	-boot-info-table \
+    	-J -r -V "PokmonOS" \
+    	-o build/os_image.iso \
+    	iso/
 
-
-run: iso
-	qemu-system-i386 -cdrom $(ISO_IMAGE)
-
-clean: rm -rf $(SRC_DIR)/**/.o $(BUILD_DIR)/boot/*.o
+all: build/image.iso
